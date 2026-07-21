@@ -1,0 +1,518 @@
+The popup is rendering correctly, but the **previous/next arrow controls are no longer visible**.
+
+The likely reason is that the old RichFaces image command generated an HTML:
+
+```html
+<input type="image">
+```
+
+Your new `p:commandLink` generates:
+
+```html
+<a>
+    <img>
+</a>
+```
+
+Your legacy CSS/layout—especially `styleClass="secondary"`—was probably written for an `input` or button, not for an anchor containing an image. PrimeFaces does render child components inside `p:commandLink`, so the problem is most likely the legacy CSS/layout or resource URL. ([GitHub][1])
+
+For this particular legacy migration, the safest solution is:
+
+> Use Jakarta Faces 4 `<h:commandButton image="...">` and attach PrimeFaces `<p:ajax>`.
+
+Jakarta Faces 4 officially supports the `image` attribute and renders the component as `<input type="image">`, which closely matches your old RichFaces HTML structure. ([jakarta.ee][2])
+
+# Step 1: Remove the new `p:commandLink`
+
+Remove this entire structure:
+
+```xhtml
+<h:panelGroup id="previousNavigationPanel">
+
+    <p:commandLink ...>
+
+        <h:graphicImage .../>
+
+    </p:commandLink>
+
+</h:panelGroup>
+```
+
+We will replace it with an image command button.
+
+---
+
+# Step 2: Add an always-rendered wrapper
+
+Keep one wrapper around the button:
+
+```xhtml
+<h:panelGroup id="previousNavigationPanel">
+    
+</h:panelGroup>
+```
+
+The wrapper is important because it can always be updated through Ajax, even when the button state changes.
+
+---
+
+# Step 3: Add one JSF 4 image command button
+
+Inside the wrapper, add:
+
+```xhtml
+<h:commandButton
+    id="prvImg"
+    styleClass="secondary"
+    disabled="#{independentContactHistoryController
+                .viewEditFollowUpListBean.diablePrev}"
+    action="#{independentContactHistoryController
+              .navigatePreviousContactHistory}"
+    image="#{independentContactHistoryController
+             .viewEditFollowUpListBean.diablePrev
+             ? resource['images:common/button-previous-disabled.png']
+             : resource['images:common/button-previous.png']}"
+    alt="Previous contact history"
+    title="Previous contact history">
+
+</h:commandButton>
+```
+
+## What this line does
+
+```xhtml
+image="#{bean.diablePrev
+         ? resource['images:common/button-previous-disabled.png']
+         : resource['images:common/button-previous.png']}"
+```
+
+When:
+
+```text
+diablePrev = true
+```
+
+JSF displays:
+
+```text
+button-previous-disabled.png
+```
+
+When:
+
+```text
+diablePrev = false
+```
+
+JSF displays:
+
+```text
+button-previous.png
+```
+
+You need only one button.
+
+Jakarta Faces resolves the image URL and renders an `<input type="image">`. ([jakarta.ee][2])
+
+---
+
+# Step 4: Add PrimeFaces Ajax inside the button
+
+Place this inside the `h:commandButton`:
+
+```xhtml
+<p:ajax
+    process="@form"
+    update=":viewEditContactHistoryForm:editFollowupNoteMainID
+            :viewEditContactHistoryForm:contactViewEditSaveCloseButtonsPanelID
+            :viewEditContactHistoryForm:previousNavigationPanel
+            :editCloseFollowUpConfirmDialog"
+    oncomplete="handlePreviousNavigationComplete(args)"/>
+```
+
+PrimeFaces `p:ajax` is an extension of the standard Faces Ajax behavior and supports PrimeFaces processing, updating, and completion callbacks. ([PrimeFaces][3])
+
+The complete component is:
+
+```xhtml
+<h:panelGroup id="previousNavigationPanel">
+
+    <h:commandButton
+        id="prvImg"
+        styleClass="secondary"
+
+        disabled="#{independentContactHistoryController
+                    .viewEditFollowUpListBean.diablePrev}"
+
+        action="#{independentContactHistoryController
+                  .navigatePreviousContactHistory}"
+
+        image="#{independentContactHistoryController
+                 .viewEditFollowUpListBean.diablePrev
+                 ? resource['images:common/button-previous-disabled.png']
+                 : resource['images:common/button-previous.png']}"
+
+        alt="Previous contact history"
+        title="Previous contact history">
+
+        <p:ajax
+            process="@form"
+
+            update=":viewEditContactHistoryForm:editFollowupNoteMainID
+                    :viewEditContactHistoryForm:contactViewEditSaveCloseButtonsPanelID
+                    :viewEditContactHistoryForm:previousNavigationPanel
+                    :editCloseFollowUpConfirmDialog"
+
+            oncomplete="handlePreviousNavigationComplete(args)"/>
+
+    </h:commandButton>
+
+</h:panelGroup>
+```
+
+---
+
+# Step 5: Preserve the existing CSS class
+
+Keep:
+
+```xhtml
+styleClass="secondary"
+```
+
+This is important because the existing application probably contains CSS similar to:
+
+```css
+.secondary {
+    /* Legacy button size, border, background or positioning */
+}
+```
+
+Because `h:commandButton image="..."` renders an input element, the existing CSS is much more likely to continue working.
+
+Do not replace it immediately with:
+
+```xhtml
+styleClass="history-navigation-link"
+```
+
+First restore the old appearance. CSS modernization can happen after the migration works.
+
+---
+
+# Step 6: Verify your image folder
+
+The files must exist here:
+
+```text
+src/main/webapp/resources/images/common/
+```
+
+Complete structure:
+
+```text
+src
+└── main
+    └── webapp
+        └── resources
+            └── images
+                └── common
+                    ├── button-previous.png
+                    └── button-previous-disabled.png
+```
+
+The resource expression:
+
+```xhtml
+#{resource['images:common/button-previous.png']}
+```
+
+means:
+
+```text
+Library name: images
+
+Resource name:
+common/button-previous.png
+```
+
+Jakarta Faces supports resource-library references for image resources. ([jakarta.ee][4])
+
+---
+
+# Step 7: Add the Java wrapper method
+
+In `IndependentContactHistoryController`, add:
+
+```java
+import org.primefaces.PrimeFaces;
+
+public void navigatePreviousContactHistory() {
+
+    /*
+     * Call the existing business logic.
+     */
+    getContactHistoryForNoteIDPreNext("prev");
+
+    /*
+     * Send the latest dataModified value to JavaScript.
+     */
+    PrimeFaces.current()
+            .ajax()
+            .addCallbackParam(
+                    "dataModified",
+                    dataModified
+            );
+}
+```
+
+When `dataModified` is accessible only through a getter:
+
+```java
+public void navigatePreviousContactHistory() {
+
+    getContactHistoryForNoteIDPreNext("prev");
+
+    PrimeFaces.current()
+            .ajax()
+            .addCallbackParam(
+                    "dataModified",
+                    getDataModified()
+            );
+}
+```
+
+Use only the version that matches your controller.
+
+PrimeFaces callback parameters are made available through the JavaScript Ajax callback arguments. ([PrimeFaces][5])
+
+---
+
+# Step 8: Add the JavaScript completion function
+
+Add this once to the XHTML:
+
+```xhtml
+<h:outputScript target="body">
+
+    function handlePreviousNavigationComplete(args) {
+
+        setDatepicker();
+
+        if (args &amp;&amp; args.dataModified === true) {
+
+            showConfirmationContactHistoryPopup(
+                'viewEditPrevFollowUpConfirmDialog',
+                400
+            );
+        }
+    }
+
+</h:outputScript>
+```
+
+Use:
+
+```xhtml
+&amp;&amp;
+```
+
+because this is an XHTML/XML document.
+
+Do not use your old expression:
+
+```xhtml
+#{independentContactHistoryController.dataModified == 'false'}
+```
+
+That compares the property with a String and can also use a value rendered before the current Ajax operation completes.
+
+---
+
+# Step 9: Remove manual button disabling
+
+Remove:
+
+```xhtml
+onclick="this.disabled=true;"
+```
+
+For the first test, do not manually disable the image input.
+
+The PrimeFaces Ajax queue processes requests sequentially by default, so first confirm that the button displays and functions correctly. ([PrimeFaces][6])
+
+After everything works, duplicate-click handling can be added separately without interfering with the image submission.
+
+---
+
+# Step 10: Check the confirmation-dialog ID
+
+Your update currently contains:
+
+```xhtml
+:editCloseFollowUpConfirmDialog
+```
+
+This is correct only when the dialog is outside the form:
+
+```xhtml
+<h:form id="viewEditContactHistoryForm">
+    ...
+</h:form>
+
+<p:confirmDialog id="editCloseFollowUpConfirmDialog">
+    ...
+</p:confirmDialog>
+```
+
+When the dialog is inside the form:
+
+```xhtml
+<h:form id="viewEditContactHistoryForm">
+
+    <p:confirmDialog id="editCloseFollowUpConfirmDialog">
+        ...
+    </p:confirmDialog>
+
+</h:form>
+```
+
+change the update target to:
+
+```xhtml
+:viewEditContactHistoryForm:editCloseFollowUpConfirmDialog
+```
+
+---
+
+# Step 11: Test only the image first
+
+Before testing the action, temporarily use this:
+
+```xhtml
+<h:commandButton
+    id="prvImgTest"
+    styleClass="secondary"
+    image="#{resource['images:common/button-previous.png']}"
+    type="button"
+    alt="Previous"/>
+```
+
+Expected result:
+
+```text
+The previous arrow must appear.
+```
+
+## When the image appears
+
+Your resource path and CSS are correct. Replace the test component with the complete Ajax component.
+
+## When the image still does not appear
+
+Open this URL directly in the browser:
+
+```text
+http://localhost:9091/midofficetools-webapp/resources/images/common/button-previous.png
+```
+
+Possible results:
+
+### Image opens
+
+The image exists. The problem is CSS or positioning.
+
+### HTTP 404
+
+The file location or filename is wrong.
+
+Check exact capitalization:
+
+```text
+button-previous.png
+button-Previous.png
+Button-previous.png
+```
+
+These can behave differently when deployed to Linux.
+
+---
+
+# Final previous-button code
+
+Use this as the final replacement:
+
+```xhtml
+<h:panelGroup id="previousNavigationPanel">
+
+    <h:commandButton
+        id="prvImg"
+        styleClass="secondary"
+
+        disabled="#{independentContactHistoryController
+                    .viewEditFollowUpListBean.diablePrev}"
+
+        action="#{independentContactHistoryController
+                  .navigatePreviousContactHistory}"
+
+        image="#{independentContactHistoryController
+                 .viewEditFollowUpListBean.diablePrev
+                 ? resource['images:common/button-previous-disabled.png']
+                 : resource['images:common/button-previous.png']}"
+
+        alt="Previous contact history"
+        title="Previous contact history">
+
+        <p:ajax
+            process="@form"
+
+            update=":viewEditContactHistoryForm:editFollowupNoteMainID
+                    :viewEditContactHistoryForm:contactViewEditSaveCloseButtonsPanelID
+                    :viewEditContactHistoryForm:previousNavigationPanel
+                    :editCloseFollowUpConfirmDialog"
+
+            oncomplete="handlePreviousNavigationComplete(args)"/>
+
+    </h:commandButton>
+
+</h:panelGroup>
+```
+
+# Why this is now the better approach
+
+```text
+Old RichFaces
+<a:commandButton image="...">
+          ↓
+Generated input type="image"
+
+Jakarta Faces 4
+<h:commandButton image="...">
+          ↓
+Generated input type="image"
+```
+
+This preserves:
+
+* The existing image files.
+* The existing `.secondary` CSS.
+* The existing page positioning.
+* The enabled/disabled button behavior.
+* The existing Java action logic.
+* PrimeFaces Ajax processing and updates.
+
+Your current invisible-arrow problem should be solved first by testing this single static component:
+
+```xhtml
+<h:commandButton
+    image="#{resource['images:common/button-previous.png']}"
+    type="button"/>
+```
+
+[1]: https://raw.githubusercontent.com/primefaces/primefaces/15.0.0/primefaces/src/main/java/org/primefaces/component/commandlink/CommandLinkRenderer.java "raw.githubusercontent.com"
+[2]: https://jakarta.ee/specifications/faces/4.0/vdldoc/h/commandbutton "commandButton (Jakarta Faces 4.0.0 VDL Documentation)
+			"
+[3]: https://primefaces.github.io/primefaces/vdldoc/primefaces/tld-summary.html?utm_source=chatgpt.com "primefaces (PrimeFaces VDL Documentation)"
+[4]: https://jakarta.ee/specifications/faces/4.0/vdldoc/h/graphicimage?utm_source=chatgpt.com "graphicImage (Jakarta Faces 4.0.0 VDL Documentation)"
+[5]: https://primefaces.github.io/primefaces/jsdocs/modules/src_PrimeFaces.PrimeFaces.ajax.html?utm_source=chatgpt.com "ajax | PrimeFaces JavaScript API Docs"
+[6]: https://primefaces.github.io/primefaces/jsdocs/interfaces/src_PrimeFaces.PrimeFaces.ajax.Configuration.html?utm_source=chatgpt.com "Configuration | PrimeFaces JavaScript API Docs"
